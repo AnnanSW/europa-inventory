@@ -354,12 +354,12 @@ def preload_realistic_changes(initial_inventory):
     """
     Generates realistic inventory changes only up to current mission day.
     Includes consumption per category and occasional resupply.
+    Fully safe against empty categories or zero-stock items.
     """
     change_log = []
     version_id = 2  # 1 is reserved for INITIAL_LOAD
     current_state = copy.deepcopy(initial_inventory)
 
-    # Define average daily consumption per category
     category_daily_use = {
         "Hydratable Meals": CREW_SIZE * 3,
         "Thermostabilized Meals": CREW_SIZE * 3,
@@ -368,7 +368,6 @@ def preload_realistic_changes(initial_inventory):
         "Condiments & Spreads": CREW_SIZE * 5
     }
 
-    # Current mission day
     current_mission_day = get_current_mission_day()
 
     for day_offset in range(current_mission_day):
@@ -377,8 +376,11 @@ def preload_realistic_changes(initial_inventory):
             if not items:
                 continue  # skip empty category
 
-            # Decide how many items to change today (1–5)
-            num_changes = random.randint(1, min(5, len(items)))
+            max_changes = min(5, len(items))
+            if max_changes < 1:
+                continue  # safe guard
+
+            num_changes = random.randint(1, max_changes)
             for _ in range(num_changes):
                 item = random.choice(items)
                 old_amount = current_state[category][item]["current"]
@@ -386,22 +388,20 @@ def preload_realistic_changes(initial_inventory):
                 if old_amount == 0:
                     continue  # skip zero stock items
 
-                # 90% chance of consumption, 10% chance of resupply
+                # 10% chance of resupply, 90% consumption
                 if random.random() < 0.1:
-                    # Resupply
                     add_units = random.randint(1, 10)
                     new_amount = old_amount + add_units
                     action = "add"
                     if new_amount > current_state[category][item]["original"]:
                         current_state[category][item]["original"] = new_amount
                 else:
-                    # Consumption
                     max_remove = max(1, daily_total // len(items))
                     remove_units = random.randint(1, min(max_remove, old_amount))
                     new_amount = old_amount - remove_units
                     action = "remove"
 
-                # Random timestamp within day (6am–10pm)
+                # timestamp within day (6am–10pm)
                 ts = MISSION_START_DATE + timedelta(
                     days=day_offset,
                     hours=random.randint(6, 22),
@@ -983,3 +983,4 @@ elif st.session_state.page == "EditItem":
 elif st.session_state.page == "History": 
 
     consumption_history_page()
+
