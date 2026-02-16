@@ -353,12 +353,13 @@ def get_initial_inventory():
 def preload_realistic_changes(initial_inventory):
     """
     Generates realistic inventory changes only up to current mission day.
-    Consumption is category-weighted: more meals consumed daily than condiments.
+    Includes consumption per category and occasional resupply.
     """
     change_log = []
     version_id = 2  # 1 is reserved for INITIAL_LOAD
     current_state = copy.deepcopy(initial_inventory)
 
+    # Define average daily consumption per category
     category_daily_use = {
         "Hydratable Meals": CREW_SIZE * 3,
         "Thermostabilized Meals": CREW_SIZE * 3,
@@ -373,41 +374,56 @@ def preload_realistic_changes(initial_inventory):
     for day_offset in range(current_mission_day):
         for category, daily_total in category_daily_use.items():
             items = list(current_state[category].keys())
-            for _ in range(random.randint(1, min(5, len(items)))):
+            if not items:
+                continue  # skip empty category
+
+            # Decide how many items to change today (1–5)
+            num_changes = random.randint(1, min(5, len(items)))
+            for _ in range(num_changes):
                 item = random.choice(items)
                 old_amount = current_state[category][item]["current"]
 
-                # Random consumption proportional to daily_total / items
-                max_remove = max(1, daily_total // len(items))
-                remove_units = random.randint(0, min(max_remove, old_amount))
-                new_amount = old_amount - remove_units
-                action = "remove" if remove_units > 0 else "none"
+                if old_amount == 0:
+                    continue  # skip zero stock items
 
-                if action != "none":
-                    # Random timestamp in this day
-                    ts = MISSION_START_DATE + timedelta(
-                        days=day_offset,
-                        hours=random.randint(6, 22),  # awake hours
-                        minutes=random.randint(0,59),
-                        seconds=random.randint(0,59)
-                    )
+                # 90% chance of consumption, 10% chance of resupply
+                if random.random() < 0.1:
+                    # Resupply
+                    add_units = random.randint(1, 10)
+                    new_amount = old_amount + add_units
+                    action = "add"
+                    if new_amount > current_state[category][item]["original"]:
+                        current_state[category][item]["original"] = new_amount
+                else:
+                    # Consumption
+                    max_remove = max(1, daily_total // len(items))
+                    remove_units = random.randint(1, min(max_remove, old_amount))
+                    new_amount = old_amount - remove_units
+                    action = "remove"
 
-                    current_state[category][item]["current"] = new_amount
+                # Random timestamp within day (6am–10pm)
+                ts = MISSION_START_DATE + timedelta(
+                    days=day_offset,
+                    hours=random.randint(6, 22),
+                    minutes=random.randint(0, 59),
+                    seconds=random.randint(0, 59)
+                )
 
-                    change_log.append({
-                        "version_id": version_id,
-                        "timestamp": ts.strftime("%Y-%m-%d %H:%M:%S"),
-                        "category": category,
-                        "item": item,
-                        "action": action,
-                        "old_amount": old_amount,
-                        "new_amount": new_amount,
-                        "state_after_change": copy.deepcopy(current_state)
-                    })
-                    version_id += 1
+                current_state[category][item]["current"] = new_amount
+
+                change_log.append({
+                    "version_id": version_id,
+                    "timestamp": ts.strftime("%Y-%m-%d %H:%M:%S"),
+                    "category": category,
+                    "item": item,
+                    "action": action,
+                    "old_amount": old_amount,
+                    "new_amount": new_amount,
+                    "state_after_change": copy.deepcopy(current_state)
+                })
+                version_id += 1
 
     return change_log
-
 
 # --- ICONS MAPPING ---
 ICON_MAP = {
@@ -424,7 +440,7 @@ if "inventory" not in st.session_state:
 if "change_log" not in st.session_state:
     initial_inventory = get_initial_inventory()
 
-    # INITIAL LOAD
+    # 1️⃣ INITIAL LOAD
     initial_entry = {
         "version_id": 1,
         "timestamp": MISSION_START_DATE.strftime("%Y-%m-%d %H:%M:%S"),
@@ -435,6 +451,18 @@ if "change_log" not in st.session_state:
         "new_amount": "N/A",
         "state_after_change": copy.deepcopy(initial_inventory)
     }
+
+    # 2️⃣ PRELOAD REALISTIC PAST CHANGES (only up to today)
+    preloaded_changes = preload_realistic_changes(initial_inventory)
+
+    # 3️⃣ MERGE INTO SESSION STATE
+    st.session_state.change_log = [initial_entry] + preloaded_changes
+
+    # 4️⃣ Set current inventory to last known state
+    st.session_state.inventory = (
+        copy.deepcopy(preloaded_changes[-1]["state_after_change"])
+        if preloaded_changes else initial_inventory
+    )
 
     # PRELOAD REALISTIC PAST CHANGES
     preloaded_changes = preload_realistic_changes(initial_inventory)
@@ -953,4 +981,5 @@ elif st.session_state.page == "Category":
 elif st.session_state.page == "EditItem":
     edit_item_page()
 elif st.session_state.page == "History": 
+
     consumption_history_page()
